@@ -132,8 +132,11 @@ app.post('/api/orders', (req, res) => {
     return res.status(400).json({ error: 'Items array is required' });
   }
 
-  if (!tableNumber) {
-    return res.status(400).json({ error: 'Table number is required' });
+  // Allow optional tableNumber for takeout orders; default type is 'dine-in'
+  const type = req.body.type || 'dine-in';
+
+  if (type === 'dine-in' && !tableNumber) {
+    return res.status(400).json({ error: 'Table number is required for dine-in orders' });
   }
   
   // Calculate total price
@@ -143,7 +146,8 @@ app.post('/api/orders', (req, res) => {
     id: orderIdCounter++,
     orderNumber: `ORD${String(orderIdCounter - 1).padStart(3, '0')}`,
     tableNumber: parseInt(tableNumber),
-    items,
+    items: items.map(item => ({ ...item, prepared: false })),
+    type,
     totalPrice: parseFloat(totalPrice.toFixed(2)),
     status: 'pending',
     createdAt: new Date(),
@@ -172,6 +176,52 @@ app.put('/api/orders/:id', (req, res) => {
   }
   
   res.json(order);
+});
+
+// POST add items to existing order
+app.post('/api/orders/:id/items', (req, res) => {
+  const order = orders.find(o => o.id === parseInt(req.params.id));
+  if (!order) {
+    return res.status(404).json({ error: 'Order not found' });
+  }
+
+  const { items } = req.body;
+  if (!items || !Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({ error: 'Items array is required' });
+  }
+
+  // Append items, ensure prepared flag is set
+  const newItems = items.map(item => ({ ...item, prepared: false }));
+  order.items = order.items.concat(newItems);
+
+  // Recalculate total price
+  const totalPrice = order.items.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+  order.totalPrice = parseFloat(totalPrice.toFixed(2));
+
+  res.json(order);
+});
+
+// PATCH update a specific item's prepared state
+app.patch('/api/orders/:id/items/:index', (req, res) => {
+  const order = orders.find(o => o.id === parseInt(req.params.id));
+  if (!order) {
+    return res.status(404).json({ error: 'Order not found' });
+  }
+
+  const index = parseInt(req.params.index, 10);
+  if (isNaN(index) || index < 0 || index >= order.items.length) {
+    return res.status(400).json({ error: 'Invalid item index' });
+  }
+
+  const { prepared } = req.body;
+  // If prepared not provided, toggle the current value
+  if (typeof prepared === 'boolean') {
+    order.items[index].prepared = prepared;
+  } else {
+    order.items[index].prepared = !order.items[index].prepared;
+  }
+
+  res.json({ item: order.items[index], orderId: order.id });
 });
 
 // DELETE order

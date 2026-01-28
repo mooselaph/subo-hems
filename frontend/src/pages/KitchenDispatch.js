@@ -167,6 +167,19 @@ function KitchenDispatch() {
       setPreviousOrderCount(currentPendingCount);
       setPreviousOrderIds(currentOrderIds);
       setOrders(newOrders);
+
+      // Initialize checkedItems from server-side `prepared` flags
+      const initialChecked = {};
+      newOrders.forEach(order => {
+        if (order.items && Array.isArray(order.items)) {
+          order.items.forEach((item, idx) => {
+            if (item.prepared) {
+              initialChecked[`${order.id}-${idx}`] = true;
+            }
+          });
+        }
+      });
+      setCheckedItems(initialChecked);
     } catch (err) {
       setError('Failed to fetch orders');
       console.error(err);
@@ -201,10 +214,25 @@ function KitchenDispatch() {
 
   const toggleItemCheck = (orderId, itemIndex) => {
     const key = `${orderId}-${itemIndex}`;
+    const newValue = !checkedItems[key];
+
+    // Optimistically update UI
     setCheckedItems(prev => ({
       ...prev,
-      [key]: !prev[key]
+      [key]: newValue
     }));
+
+    // Persist prepared state to backend
+    axios.patch(`${API_BASE_URL}/orders/${orderId}/items/${itemIndex}`, { prepared: newValue })
+      .then(() => {
+        // Refresh orders to keep everything in sync
+        fetchOrders();
+      })
+      .catch(err => {
+        console.error('Failed to update item prepared state', err);
+        // Revert optimistic update on error
+        setCheckedItems(prev => ({ ...prev, [key]: !newValue }));
+      });
   };
 
   const areAllItemsChecked = (orderId, itemCount) => {
@@ -257,15 +285,20 @@ function KitchenDispatch() {
         {filteredOrders.length > 0 && (
           <div className="orders-list">
             {filteredOrders.map(order => (
-              <div key={order.id} className={`order-card order-${order.status}`}>
+              <div key={order.id} className={`order-card order-${order.status} ${order.type === 'takeout' ? 'order-takeout' : ''}`}>
                 <div className="order-header">
                   <div className="order-header-content">
-                    <h3 className="table-number">Table {order.tableNumber}</h3>
+                    <h3 className="table-number">{order.type === 'takeout' ? 'Takeout' : `Table ${order.tableNumber}`}</h3>
                     <p className="order-number">{order.orderNumber}</p>
                   </div>
-                  <span className={`status-badge status-${order.status}`}>
-                    {order.status.charAt(0).toUpperCase() + order.status.slice(1)}
-                  </span>
+                  <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                    <span className={`status-badge status-${order.status}`}>
+                      {order.status.charAt(0).toUpperCase() + order.status.slice(1)}
+                    </span>
+                    {order.type === 'takeout' && (
+                      <span className="type-badge">Takeout</span>
+                    )}
+                  </div>
                 </div>
 
                 <div className="order-items">

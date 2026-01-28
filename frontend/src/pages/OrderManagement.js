@@ -18,6 +18,7 @@ function OrderManagement() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [showCreateForm, setShowCreateForm] = useState(false);
+  const [orderType, setOrderType] = useState('dine-in');
   const [selectedCategory, setSelectedCategory] = useState('appetizers');
   const [searchTerm, setSearchTerm] = useState('');
   const [tableNumber, setTableNumber] = useState('');
@@ -28,10 +29,21 @@ function OrderManagement() {
   const [itemNotes, setItemNotes] = useState('');
   const [itemQuantity, setItemQuantity] = useState(1);
   const [toasts, setToasts] = useState([]);
+  // States for adding items to existing orders
+  const [showAddItemsModal, setShowAddItemsModal] = useState(false);
+  const [addTargetOrder, setAddTargetOrder] = useState(null);
+  const [addCartItems, setAddCartItems] = useState([]);
+  const [selectedItemForAdd, setSelectedItemForAdd] = useState(null);
+  const [addItemNotes, setAddItemNotes] = useState('');
+  const [addItemQuantity, setAddItemQuantity] = useState(1);
 
   useEffect(() => {
     fetchOrders();
+    // Poll orders periodically so ordering view stays in sync with kitchen
+    const interval = setInterval(fetchOrders, 3000);
     fetchMenu();
+
+    return () => clearInterval(interval);
   }, []);
 
   const fetchOrders = async () => {
@@ -93,6 +105,74 @@ function OrderManagement() {
     setShowNotesModal(true);
   };
 
+  const handleAddItemToList = (item) => {
+    const existing = addCartItems.find(ci => ci.id === item.id);
+    if (existing) {
+      setAddCartItems(addCartItems.map(ci => ci.id === item.id ? { ...ci, quantity: ci.quantity + 1 } : ci));
+    } else {
+      setAddCartItems([...addCartItems, { ...item, quantity: 1, notes: '' }]);
+    }
+  };
+
+  // --- Add items to existing order flow ---
+  const handleOpenAddItems = (order) => {
+    setAddTargetOrder(order);
+    setAddCartItems([]);
+    // close table selector to avoid overlay conflicts
+    setShowTableSelection(false);
+    setShowAddItemsModal(true);
+  };
+
+  const handleAddToOrder = (item) => {
+    setSelectedItemForAdd(item);
+    setAddItemNotes('');
+    setAddItemQuantity(1);
+  };
+
+  const handleConfirmAddToOrder = () => {
+    if (!selectedItemForAdd) return;
+    const existingItem = addCartItems.find(cartItem => cartItem.id === selectedItemForAdd.id);
+    const newItem = { ...selectedItemForAdd, quantity: addItemQuantity, notes: addItemNotes };
+    if (existingItem) {
+      setAddCartItems(addCartItems.map(cartItem =>
+        cartItem.id === selectedItemForAdd.id
+          ? { ...cartItem, quantity: cartItem.quantity + addItemQuantity }
+          : cartItem
+      ));
+    } else {
+      setAddCartItems([...addCartItems, newItem]);
+    }
+    showToast(`${selectedItemForAdd.name} x${addItemQuantity} added`);
+    setSelectedItemForAdd(null);
+    setAddItemNotes('');
+    setAddItemQuantity(1);
+    setShowNotesModal(false);
+  };
+
+  const handleSubmitAddToOrder = async () => {
+    if (!addTargetOrder) return;
+    if (addCartItems.length === 0) {
+      alert('Add items first');
+      return;
+    }
+    try {
+      // If the order was already completed, set it back to pending
+      if (addTargetOrder.status === 'completed') {
+        await axios.put(`${API_BASE_URL}/orders/${addTargetOrder.id}`, { status: 'pending' });
+      }
+
+      await axios.post(`${API_BASE_URL}/orders/${addTargetOrder.id}/items`, { items: addCartItems });
+      setShowAddItemsModal(false);
+      setAddTargetOrder(null);
+      setAddCartItems([]);
+      fetchOrders();
+      showToast('Items added to order');
+    } catch (err) {
+      console.error('Failed to add items to order', err);
+      setError('Failed to add items to order');
+    }
+  };
+
   const handleConfirmAddToCart = () => {
     if (!selectedItemForNotes) return;
     
@@ -133,8 +213,8 @@ function OrderManagement() {
   const handleCreateOrder = async (e) => {
     e.preventDefault();
 
-    if (!tableNumber) {
-      alert('Please enter a table number');
+    if (orderType === 'dine-in' && !tableNumber) {
+      alert('Please enter a table number for dine-in orders');
       return;
     }
 
@@ -146,7 +226,8 @@ function OrderManagement() {
     try {
       await axios.post(`${API_BASE_URL}/orders`, {
         items: cartItems,
-        tableNumber: parseInt(tableNumber)
+        tableNumber: tableNumber ? parseInt(tableNumber) : undefined,
+        type: orderType
       });
       setTableNumber('');
       setCartItems([]);
@@ -177,6 +258,11 @@ function OrderManagement() {
       {showCreateForm && (
         <div className="create-order-section">
           <div className="cart-section">
+            <div style={{ marginBottom: '0.5rem' }}>
+              <label style={{ marginRight: '0.5rem', fontWeight: 600 }}>Order Type:</label>
+              <button className={`category-tab ${orderType === 'dine-in' ? 'active' : ''}`} onClick={() => setOrderType('dine-in')}>Dine In</button>
+              <button className={`category-tab ${orderType === 'takeout' ? 'active' : ''}`} onClick={() => setOrderType('takeout')} style={{ marginLeft: '0.5rem' }}>Takeout</button>
+            </div>
             <div className="cart-header">
               <h3>Order Cart</h3>
               <button
@@ -187,8 +273,11 @@ function OrderManagement() {
               </button>
             </div>
 
-            {showTableSelection && (
+            {orderType === 'dine-in' && showTableSelection && (
               <div className="table-selection-wrapper">
+                <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '0.5rem' }}>
+                  <button className="btn btn-secondary" onClick={() => setShowTableSelection(false)}>Close</button>
+                </div>
                 <div className="form-section">
                   <div className="table-selection">
                     {Object.entries(tableGroups).map(([groupName, tables]) => (
@@ -315,30 +404,36 @@ function OrderManagement() {
         </div>
       )}
 
-      {showNotesModal && selectedItemForNotes && (
+      {showNotesModal && (selectedItemForNotes || selectedItemForAdd) && (
         <div className="modal-overlay">
           <div className="modal-content">
-            <h3>Add Notes to {selectedItemForNotes.name}</h3>
-            
+            <h3>Add Notes to {(selectedItemForNotes || selectedItemForAdd).name}</h3>
+
             <div className="quantity-section">
               <label>Quantity:</label>
               <div className="quantity-input">
                 <button 
                   className="qty-btn"
-                  onClick={() => setItemQuantity(Math.max(1, itemQuantity - 1))}
+                  onClick={() => {
+                    if (selectedItemForNotes) setItemQuantity(Math.max(1, itemQuantity - 1));
+                    else setAddItemQuantity(Math.max(1, addItemQuantity - 1));
+                  }}
                 >
                   −
                 </button>
                 <input 
                   type="number" 
-                  value={itemQuantity} 
-                  onChange={(e) => setItemQuantity(Math.max(1, parseInt(e.target.value) || 1))}
+                  value={selectedItemForNotes ? itemQuantity : addItemQuantity} 
+                  onChange={(e) => {
+                    if (selectedItemForNotes) setItemQuantity(Math.max(1, parseInt(e.target.value) || 1));
+                    else setAddItemQuantity(Math.max(1, parseInt(e.target.value) || 1));
+                  }}
                   className="qty-input"
                   min="1"
                 />
                 <button 
                   className="qty-btn"
-                  onClick={() => setItemQuantity(itemQuantity + 1)}
+                  onClick={() => { if (selectedItemForNotes) setItemQuantity(itemQuantity + 1); else setAddItemQuantity(addItemQuantity + 1); }}
                 >
                   +
                 </button>
@@ -346,8 +441,8 @@ function OrderManagement() {
             </div>
 
             <textarea
-              value={itemNotes}
-              onChange={(e) => setItemNotes(e.target.value)}
+              value={selectedItemForNotes ? itemNotes : addItemNotes}
+              onChange={(e) => { if (selectedItemForNotes) setItemNotes(e.target.value); else setAddItemNotes(e.target.value); }}
               placeholder="Add special requests or notes (optional)..."
               className="notes-textarea"
             />
@@ -356,19 +451,104 @@ function OrderManagement() {
                 className="btn btn-secondary"
                 onClick={() => {
                   setShowNotesModal(false);
-                  setSelectedItemForNotes(null);
-                  setItemNotes('');
-                  setItemQuantity(1);
+                  if (selectedItemForNotes) {
+                    setSelectedItemForNotes(null);
+                    setItemNotes('');
+                    setItemQuantity(1);
+                  } else {
+                    setSelectedItemForAdd(null);
+                    setAddItemNotes('');
+                    setAddItemQuantity(1);
+                  }
                 }}
               >
                 Cancel
               </button>
               <button
                 className="btn btn-success"
-                onClick={handleConfirmAddToCart}
+                onClick={() => {
+                  if (selectedItemForNotes) handleConfirmAddToCart();
+                  else handleConfirmAddToOrder();
+                }}
               >
-                Add to Cart
+                {selectedItemForNotes ? 'Add to Cart' : 'Add to Order'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* add-items modal replaced by inline panel rendered inside each order card */}
+      {showAddItemsModal && addTargetOrder && (
+        <div className="modal-overlay">
+          <div className="modal-content" style={{ maxWidth: '900px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+              <h3 style={{ margin: 0 }}>Add Items to {addTargetOrder.orderNumber}</h3>
+              <div>
+                <button className="btn btn-secondary" onClick={() => { setShowAddItemsModal(false); setAddTargetOrder(null); }}>Close</button>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: '1rem' }}>
+              <div style={{ flex: 1 }}>
+                <div className="search-bar">
+                  <input
+                    type="text"
+                    placeholder="Search menu items..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="search-input"
+                  />
+                </div>
+                <div className="menu-items-grid">
+                  {getFilteredMenuItems().map(item => (
+                    <div key={item.id} className="menu-item-card">
+                      <h4>{item.name}</h4>
+                      <p className="menu-item-price">₱{item.price.toFixed(2)}</p>
+                      <button className="btn btn-success btn-small" onClick={() => handleAddItemToList(item)}>
+                        + Add
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div style={{ flex: 1 }}>
+                <h4>Items to add</h4>
+                {addCartItems.length === 0 ? (
+                  <p className="empty-cart">No items added</p>
+                ) : (
+                  <div>
+                    {addCartItems.map(item => (
+                        <div key={item.id} className="cart-item">
+                          <div className="cart-item-info">
+                            <p className="cart-item-name">{item.name}</p>
+                            <p className="cart-item-price">₱{item.price.toFixed(2)}</p>
+                            <textarea
+                              className="notes-textarea"
+                              placeholder="Notes (optional)"
+                              value={item.notes || ''}
+                              onChange={(e) => setAddCartItems(addCartItems.map(ci => ci.id === item.id ? { ...ci, notes: e.target.value } : ci))}
+                            />
+                          </div>
+                          <div className="cart-item-controls">
+                            <button className="btn-qty" onClick={() => setAddCartItems(addCartItems.map(ci => ci.id === item.id ? { ...ci, quantity: Math.max(1, ci.quantity - 1) } : ci))}>−</button>
+                            <span className="qty">{item.quantity}</span>
+                            <button className="btn-qty" onClick={() => setAddCartItems(addCartItems.map(ci => ci.id === item.id ? { ...ci, quantity: ci.quantity + 1 } : ci))}>+</button>
+                            <button className="btn btn-danger btn-small" onClick={() => setAddCartItems(addCartItems.filter(ci => ci.id !== item.id))}>Remove</button>
+                          </div>
+                        </div>
+                    ))}
+                    <div className="cart-total" style={{ marginTop: '0.5rem' }}>
+                      <strong>Total: ₱{addCartItems.reduce((s, it) => s + it.price * it.quantity, 0).toFixed(2)}</strong>
+                    </div>
+                    <div style={{ marginTop: '0.5rem', display: 'flex', gap: '0.5rem' }}>
+                      <button className="btn btn-success" onClick={handleSubmitAddToOrder}>Add to Order</button>
+                      <button className="btn btn-secondary" onClick={() => { setShowAddItemsModal(false); setAddTargetOrder(null); setAddCartItems([]); }}>Cancel</button>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -420,6 +600,9 @@ function OrderManagement() {
                         <div className="item-summary">
                           {item.quantity}x {item.name} - ₱{(item.price * item.quantity).toFixed(2)}
                         </div>
+                            {item.prepared && (
+                              <div className="item-prepared">✓ Prepared</div>
+                            )}
                         {item.notes && (
                           <div className="item-notes-display">
                             Note: {item.notes}
@@ -432,12 +615,19 @@ function OrderManagement() {
 
                 <div className="order-footer">
                   <div className="order-total">
-                    <strong>Total: ${order.totalPrice.toFixed(2)}</strong>
+                    <strong>Total: ₱{order.totalPrice.toFixed(2)}</strong>
                   </div>
-                  <div className="order-time">
-                    <small>Created: {new Date(order.createdAt).toLocaleString()}</small>
-                  </div>
-                </div>
+                  <div style={{ marginTop: '0.5rem', display: 'flex', gap: '0.5rem', flexDirection: 'column' }}>
+                          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                            <button className="btn btn-success btn-small" onClick={() => handleOpenAddItems(order)}>+ Add Items</button>
+                            <div className="order-time" style={{ marginLeft: 'auto' }}>
+                              <small>Created: {new Date(order.createdAt).toLocaleString()}</small>
+                            </div>
+                          </div>
+
+                          {/* add-items inline panel removed; selection modal will be used instead */}
+                        </div>
+                      </div>
               </div>
             ))}
           </div>

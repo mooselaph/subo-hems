@@ -551,6 +551,21 @@
   color: #155724;
 }
 
+/* Takeout order styling */
+.order-card.order-takeout {
+  background-color: #eafaf0;
+  border-left-color: #2ecc71;
+}
+
+.type-badge {
+  background-color: #27ae60;
+  color: white;
+  padding: 0.25rem 0.5rem;
+  border-radius: 12px;
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
 .order-items {
   margin-bottom: 0.5rem;
 }
@@ -852,6 +867,17 @@
   margin-top: 0.2rem;
 }
 
+.item-prepared {
+  display: inline-block;
+  margin-left: 0.6rem;
+  color: #155724;
+  background-color: #d4edda;
+  padding: 0.15rem 0.5rem;
+  border-radius: 12px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
 /* Modal for Notes */
 .modal-overlay {
   position: fixed;
@@ -863,7 +889,8 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 1000;
+  z-index: 10000;
+  pointer-events: auto;
 }
 
 .modal-content {
@@ -873,6 +900,8 @@
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
   max-width: 400px;
   width: 90%;
+  position: relative;
+  z-index: 10001;
 }
 
 .modal-content h3 {
